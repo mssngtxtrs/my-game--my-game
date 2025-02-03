@@ -1,6 +1,6 @@
 use macroquad::prelude::*;
 use ::rand::{Rng, rng};
-use macroquad::rand::ChooseRandom;
+use crate::GameStates::GameOver;
 
 //----ENUMERATIONS----
 enum GameStates {
@@ -20,8 +20,10 @@ struct Player {
     speed: f32,
 
     //Game design
-    lives: i8
+    lives: i8,
 
+    //Death state
+    death: bool
 }
 //Squares
 struct Square {
@@ -37,7 +39,8 @@ impl Player{
         Self {
             circle: Circle::new(screen_width() / 2., screen_height() - 100., 10.),
             speed: 320.,
-            lives
+            lives,
+            death: false
         }
     }
 
@@ -60,8 +63,10 @@ impl Player{
     }
 
     //Collision
-    fn collision(&self, other: &Square) -> bool {
-        self.circle.overlaps_rect(&other.rect)
+    fn collision(&mut self, other: &Square){
+        if self.circle.overlaps_rect(&other.rect) {
+            self.death = true;
+        }
     }
 }
 //Squares
@@ -143,13 +148,15 @@ async fn main() {
 
                 //Collision and game over
                 for square in &squares {
-                    if player.collision(square) {
-                        player.lives -= 1;
-                        if player.lives <= 0 {
-                            game_state = GameStates::GameOver;
-                        } else {
-                            new_attempt();
-                        }
+                    player.collision(square)
+                }
+
+                //Check for death
+                if player.death {
+                    if player.lives > 1 {
+                        player = new_attempt(&player, &mut squares);
+                    } else if player.lives <= 1 {
+                        game_state = GameOver;
                     }
                 }
 
@@ -169,6 +176,7 @@ async fn main() {
 }
 
 //New attempt function
-fn new_attempt() {
-
+fn new_attempt(player: &Player, squares: &mut Vec<Square>) -> Player{
+    squares.clear();
+    Player::new(player.lives - 1)
 }
