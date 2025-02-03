@@ -1,13 +1,16 @@
 use std::process::exit;
-use macroquad::prelude::*;
-use ::rand::{Rng, rng};
-use macroquad::audio::{load_sound, play_sound_once};
+use std::fs;
 
+use ::rand::{Rng, rng};
+
+use macroquad::prelude::*;
+use macroquad::audio::{load_sound, play_sound_once};
 
 //----TRAITS----
 //--Collision--
 trait Collide {
     fn collider_rect(&self) -> Rect;
+    fn collide<T: Collide>(&mut self, other: &T) -> bool;
 }
 
 
@@ -22,8 +25,7 @@ const ACCENT_COLOR: Color = RED;
 enum GameStates {
     Menu,
     Playing,
-    GameOver,
-    None
+    GameOver
 }
 
 
@@ -31,36 +33,55 @@ enum GameStates {
 //Player
 #[derive(Copy, Clone)]
 struct Player {
-    //Movement
+    //Physics
     circle: Circle,
     speed: f32,
 
     //Game design
     lives: i8,
+    reload: f32,
 
     //Death state
     death: bool
 }
 //Squares
 struct Square {
+    //Physics
     rect: Rect,
-    speed: f32
+    speed: f32,
+
+    //Health
+    health: f32
 }
 //Bullet
 struct Bullet {
+    //Physics
     rect: Rect,
     speed: f32,
+
+    //Hit checker
+    hit: bool,
+
+    //Damage
+    damage: f32
 }
 
 //--IMPLEMENTATIONS--
 //Player
-impl Collide for &Player{
+impl Collide for Player{
     fn collider_rect(&self) -> Rect {
         Rect::new(
             self.circle.x - self.circle.r,
             self.circle.y - self.circle.r,
             self.circle.x + self.circle.r,
             self.circle.y + self.circle.r,)
+    }
+    fn collide<T: Collide>(&mut self, other: &T) -> bool {
+        match other {
+            square => {
+                self.circle.overlaps_rect(&square.collider_rect())
+            }
+        }
     }
 }
 impl Player{
@@ -70,6 +91,7 @@ impl Player{
             circle: Circle::new(screen_width() / 2., screen_height() - 100., 10.),
             speed: 320.,
             lives,
+            reload: 0.3,
             death: false
         }
     }
@@ -91,32 +113,23 @@ impl Player{
                 .clamp(self.circle.r, screen_width() - self.circle.r);  //Clamp to keep player inbounds
         }
     }
-
-    //Collision
-    fn collision<T: Collide>(&mut self, other: T)
-    {
-        match other {
-            Square => {
-                if self.circle.overlaps_rect(&Square.collider_rect()) {
-                    self.death = true;
-                }
-            }
-            _ => {}
-        }
-    }
 }
 //Squares
-impl Collide for &Square{
+impl Collide for Square{
     fn collider_rect(&self) -> Rect {
         self.rect
+    }
+    fn collide<T: Collide>(&mut self, _other: &T) -> bool{
+        false
     }
 }
 impl Square {
     //New square
-    fn new(x: f32, y: f32, speed: f32, size: f32) -> Self {
+    fn new(x: f32, y: f32, speed: f32, size: f32, health: f32) -> Self {
         Self{
             rect: Rect::new(x, y, size, size),
             speed,
+            health
         }
     }
 
@@ -135,13 +148,22 @@ impl Collide for Bullet {
     fn collider_rect(&self) -> Rect {
         self.rect
     }
+    fn collide<T: Collide>(&mut self, other: &T) -> bool{
+        match other {
+            square => {
+                self.collider_rect().overlaps(&square.collider_rect())
+            }
+        }
+    }
 }
 impl Bullet {
     //New bullet
     fn new(x: f32, y: f32) -> Self {
         Self{
             rect: Rect::new(x - 4., y - 6., 8., 12.),
-            speed: 1280.
+            speed: 1280.,
+            hit: false,
+            damage: 4.
         }
     }
     //Draw bullet
@@ -189,8 +211,14 @@ async fn main() {
     //Creating game state variable
     let mut game_state = GameStates::Menu;
 
+    //Creating scores
+    let mut score = 0.;
+    let mut high_score = fs::read_to_string("resources/high_score")
+        .map_or(Ok(0.), |i| i.parse::<f32>()).expect("Error reading high score file");
+
     //Creating player
     let mut player = Player::new(3);
+    let mut reload_timer = 0.;
 
     //Creating vectors with squares and bullets
     let mut squares = vec![];
@@ -247,9 +275,14 @@ async fn main() {
                     if is_key_down(KeyCode::Up) { -1. } else if is_key_down(KeyCode::Down) { 1. } else { 0. }));
 
                 //Shooting
-                if is_key_down(KeyCode::Enter){
-                    bullets.push(Bullet::new(player.circle.x, player.circle.y))
+                if is_key_down(KeyCode::Enter) && reload_timer <= 0.{
+                    bullets.push(Bullet::new(player.circle.x, player.circle.y));
+                    play_sound_once(&shot);
+                    reload_timer = player.reload;
                 }
+
+                //Reloading timer
+                reload_timer -= get_frame_time();
 
                 //Creating squares with random chance
                 if rng.random_bool(0.1) {
@@ -258,18 +291,24 @@ async fn main() {
                         rng.random_range(size .. screen_width() - size),
                         -10.,
                         rng.random_range(50. .. 150.),
-                        size
+                        size,
+                        (size * 0.25).round()
                         )
-                    )
+                    );
                 };
 
                 //Moving and drawing bullets, colliding with enemies
                 for bullet in &mut bullets {
                     bullet.movement();
                     bullet.draw();
-                    /*for square_collided in &mut squares {
-                        bullet.collide
-                    }*/
+                    for square in &mut squares {
+                        if bullet.collide(square) {
+                            bullet.hit = true;
+                            square.health -= bullet.damage;
+                            score += square.health;
+                            play_sound_once(&kill);
+                        }
+                    }
                 }
 
                 //Moving and drawing squares
@@ -280,43 +319,68 @@ async fn main() {
 
                 //Colliding with player and game over
                 for square in &squares {
-                    player.collision(square);
+                    if player.collide(square) {
+                        player.death = true;
+                    }
                 }
 
                 //Check for death
                 if player.death {
                     play_sound_once(&death);
-                    if player.lives > 0 {
+                    if player.lives > 1 {
                         player = new_attempt(player.lives - 1, &mut squares, &mut bullets);
-                    } else if player.lives <= 0 {
+                    } else if player.lives <= 1 {
                         game_state = GameStates::GameOver;
                     }
                 }
 
-                //Removing squares and bullets out of bounds
-                squares.retain(|square| square.rect.y < screen_height() + square.rect.h);
-                bullets.retain(|bullet| bullet.rect.y > -bullet.rect.h);
+                //Removing squares and bullets colliding or out of bounds
+                squares.retain(|square| square.rect.y < screen_height() + square.rect.h && square.health > 0.);
+                bullets.retain(|bullet| bullet.rect.y > -bullet.rect.h && !bullet.hit);
 
                 //Drawing player
                 player.draw();
             }
             GameStates::GameOver => {
                 //Text draw
-                draw_text_ex("GAME OVER!", screen_width() / 2. - 320., screen_height() / 2. - 20.,
+                if high_score < score {
+                    draw_text_ex("New record!", screen_width() / 2. - 100., screen_height() / 2. - 200.,
+                                 TextParams{
+                                     font: Some(&font),
+                                     font_size: 32,
+                                     color: ACCENT_COLOR,
+                                     ..Default::default()
+                                 });
+                }
+                draw_text_ex("GAME OVER!", screen_width() / 2. - 320., screen_height() / 2. - 70.,
                              TextParams{
                                  font: Some(&font),
                                  font_size: 120,
                                  color: ACCENT_COLOR,
                                  ..Default::default()
                              });
-                draw_text_ex("Press SPACE to retry", screen_width() / 2. - 150., screen_height() / 2. + 60.,
+                draw_text_ex(format!("Score: {score}").as_str(), screen_width() / 2. - 90., screen_height() / 2. + 10.,
+                             TextParams{
+                                 font: Some(&font),
+                                 font_size: 32,
+                                 color: ACCENT_COLOR,
+                                 ..Default::default()
+                             });
+                draw_text_ex(format!("High score: {high_score}").as_str(), screen_width() / 2. - 120., screen_height() / 2. + 70.,
+                             TextParams{
+                                 font: Some(&font),
+                                 font_size: 32,
+                                 color: ACCENT_COLOR,
+                                 ..Default::default()
+                             });
+                draw_text_ex("Press SPACE to retry", screen_width() / 2. - 150., screen_height() - 120.,
                              TextParams{
                                  font: Some(&font),
                                  font_size: 32,
                                  color: MAIN_COLOR,
                                  ..Default::default()
                              });
-                draw_text_ex("Press ESC to exit", screen_width() / 2. - 125., screen_height() / 2. + 120.,
+                draw_text_ex("Press ESC to exit", screen_width() / 2. - 125., screen_height() - 60.,
                              TextParams{
                                  font: Some(&font),
                                  font_size: 32,
@@ -326,14 +390,21 @@ async fn main() {
 
                 //Waiting for input
                 if is_key_down(KeyCode::Space) {
+                    if high_score < score {
+                        high_score = score;
+                        high_score_update(&score);
+                    }
+                    score = 0.;
                     player = new_attempt(3, &mut squares, &mut bullets);
                     game_state = GameStates::Playing;
                 }
                 if is_key_down(KeyCode::Escape) {
+                    if high_score < score {
+                        high_score_update(&score);
+                    }
                     exit(1);
                 }
             }
-            GameStates::None => {}
         }
 
         //Waiting for next frame
@@ -346,4 +417,8 @@ fn new_attempt(lives: i8, squares: &mut Vec<Square>, bullets: &mut Vec<Bullet>) 
     squares.clear();
     bullets.clear();
     Player::new(lives)
+}
+
+fn high_score_update(score: &f32) {
+    fs::write("resources/high_score", score.to_string()).expect("Error loading high score into file");
 }
