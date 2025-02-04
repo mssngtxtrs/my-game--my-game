@@ -16,9 +16,9 @@ trait Collide {
 
 //----CONSTANTS----
 //--Colors--
-const MAIN_COLOR: Color = WHITE;
-const BACKGROUND_COLOR: Color = BLACK;
-const ACCENT_COLOR: Color = RED;
+const MAIN_COLOR: Color = Color::new(0.9, 0.9, 0.9, 1.);
+const BACKGROUND_COLOR: Color = Color::new(0., 0., 0., 1.);
+const ACCENT_COLOR: Color = Color::new(0.8, 0., 0., 1.);
 
 
 //----ENUMERATIONS----
@@ -244,7 +244,7 @@ async fn main() {
                                  color: ACCENT_COLOR,
                                  ..Default::default()
                              });
-                draw_text_ex("Press SPACE to retry", screen_width() / 2. - 150., screen_height() / 2. + 60.,
+                draw_text_ex("Press SPACE to start", screen_width() / 2. - 150., screen_height() / 2. + 60.,
                              TextParams{
                                  font: Some(&font),
                                  font_size: 32,
